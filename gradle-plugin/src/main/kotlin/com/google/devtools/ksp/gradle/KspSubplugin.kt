@@ -139,8 +139,8 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
             classpath: Configuration,
             sourceSetName: String,
             target: String,
+            sourceSetOptions: SourceSetOptions,
             isIncremental: Boolean,
-            allWarningsAsErrors: Boolean,
         ): List<SubpluginOption> {
             val options = mutableListOf<SubpluginOption>()
             options += SubpluginOption("classOutputDir", getKspClassOutputDir(project, sourceSetName, target).path)
@@ -158,7 +158,7 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
                 project.findProperty("ksp.incremental.log")?.toString() ?: "false"
             )
             options += SubpluginOption("projectBaseDir", project.project.projectDir.canonicalPath)
-            options += SubpluginOption("allWarningsAsErrors", allWarningsAsErrors.toString())
+            options += SubpluginOption("allWarningsAsErrors", sourceSetOptions.allWarningsAsErrors.toString())
             options += FilesSubpluginOption("apclasspath", classpath.toList())
             // Turn this on by default to work KT-30172 around. It is off by default in the compiler plugin.
             options += SubpluginOption(
@@ -166,7 +166,7 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
                 project.findProperty("ksp.return.ok.on.error")?.toString() ?: "true"
             )
 
-            kspExtension.apOptions.forEach {
+            sourceSetOptions.apOptions.forEach {
                 options += SubpluginOption("apoption", "${it.key}=${it.value}")
             }
             kspExtension.commandLineArgumentProviders.forEach {
@@ -219,9 +219,9 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
             project.locateTask(kotlinCompilation.compileKotlinTaskName) ?: return project.provider { emptyList() }
         val javaCompile = findJavaTaskForKotlinCompilation(kotlinCompilation)?.get()
         val kspExtension = project.extensions.getByType(KspExtension::class.java)
-        val kspConfigurations = kspConfigurations.find(kotlinCompilation)
-        val nonEmptyKspConfigurations = kspConfigurations.filter { it.allDependencies.isNotEmpty() }
-        if (nonEmptyKspConfigurations.isEmpty()) {
+        val compilationKspConfigurations =
+            kspConfigurations.find(kotlinCompilation).filter { it.allDependencies.isNotEmpty() }
+        if (compilationKspConfigurations.isEmpty()) {
             return project.provider { emptyList() }
         }
         if (kotlinCompileProvider.name == "compileKotlinMetadata") {
@@ -258,13 +258,27 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
         val kspTaskName = kotlinCompileProvider.name.replaceFirst("compile", "ksp")
 
         val kotlinCompileTask = kotlinCompileProvider.get()
+        val sourceSetOptions = kspConfigurations.resolvedSourceSetOptions(kotlinCompilation)
+
+        fun Task.addKspMetadataDependencyIfExists(sourceSetName: String) {
+            val parentKspTaskName = lowerCamelCased("ksp", sourceSetName, "KotlinMetadata")
+
+            project.locateTask<KspTask>(parentKspTaskName)?.let { parentKspTask ->
+                dependsOn(parentKspTask)
+            }
+        }
 
         fun configureAsKspTask(kspTask: KspTask, isIncremental: Boolean) {
             // depends on the processor; if the processor changes, it needs to be reprocessed.
             val processorClasspath = project.configurations.maybeCreate("${kspTaskName}ProcessorClasspath")
-                .extendsFrom(*nonEmptyKspConfigurations.toTypedArray())
+                .extendsFrom(*compilationKspConfigurations.toTypedArray())
             kspTask.processorClasspath.from(processorClasspath)
             kspTask.dependsOn(processorClasspath.buildDependencies)
+
+            // depends on KSP tasks for parent source sets
+            kotlinCompilation.parentSourceSetsBottomUp().forEach { sourceSet ->
+                kspTask.addKspMetadataDependencyIfExists(sourceSet.name)
+            }
 
             kspTask.options.addAll(
                 kspTask.project.provider {
@@ -274,15 +288,15 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
                         processorClasspath,
                         sourceSetName,
                         target,
-                        isIncremental,
-                        kspExtension.allWarningsAsErrors
+                        sourceSetOptions,
+                        isIncremental
                     )
                 }
             )
             kspTask.commandLineArgumentProviders.addAll(kspExtension.commandLineArgumentProviders)
             kspTask.destination = kspOutputDir
             kspTask.blockOtherCompilerPlugins = kspExtension.blockOtherCompilerPlugins
-            kspTask.apOptions.value(kspExtension.arguments).disallowChanges()
+            kspTask.apOptions.value(sourceSetOptions.arguments).disallowChanges()
             kspTask.kspCacheDir.fileValue(getKspCachesDir(project, sourceSetName, target)).disallowChanges()
 
             if (kspExtension.blockOtherCompilerPlugins) {
@@ -378,6 +392,9 @@ class KspGradleSubplugin @Inject internal constructor(private val registry: Tool
 
         kotlinCompileProvider.configure { kotlinCompile ->
             kotlinCompile.dependsOn(kspTaskProvider)
+            kotlinCompilation.parentSourceSetsBottomUp().forEach { sourceSet ->
+                kotlinCompile.addKspMetadataDependencyIfExists(sourceSet.name)
+            }
             kotlinCompile.setSource(kotlinOutputDir, javaOutputDir)
             when (kotlinCompile) {
                 is AbstractKotlinCompile<*> -> kotlinCompile.libraries.from(project.files(classOutputDir))
@@ -510,7 +527,7 @@ abstract class KspTaskJvm @Inject constructor(
 
         isIntermoduleIncremental =
             (project.findProperty("ksp.incremental.intermodule")?.toString()?.toBoolean() ?: true) &&
-            isKspIncremental
+                isKspIncremental
         if (isIntermoduleIncremental) {
             val classStructureIfIncremental = project.configurations.detachedConfiguration(
                 project.dependencies.create(project.files(project.provider { kotlinCompile.libraries }))
