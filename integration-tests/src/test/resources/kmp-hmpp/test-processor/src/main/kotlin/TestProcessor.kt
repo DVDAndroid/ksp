@@ -6,6 +6,7 @@ import com.google.devtools.ksp.processing.SymbolProcessor
 import com.google.devtools.ksp.processing.SymbolProcessorEnvironment
 import com.google.devtools.ksp.processing.SymbolProcessorProvider
 import com.google.devtools.ksp.symbol.KSAnnotated
+import java.io.File
 import java.io.OutputStreamWriter
 
 class TestProcessor(
@@ -16,7 +17,10 @@ class TestProcessor(
     private var invoked = false
 
     private fun String.sourceSetBelow(startDirectoryName: String): String =
-        substringAfter("/$startDirectoryName/").substringBefore("/kotlin/").substringAfterLast('/')
+        replace(File.separatorChar, '/')
+            .substringAfter("/$startDirectoryName/")
+            .substringBefore("/kotlin/")
+            .substringAfterLast('/')
 
     override fun process(resolver: Resolver): List<KSAnnotated> {
         val allFileNamesSorted =

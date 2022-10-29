@@ -41,7 +41,7 @@ class KMPWithHmppIT {
                 // .withDebug(true)
                 .build()
                 .let { result ->
-                    val allOutput: String = result.output
+                    val allOutput: String = result.output.replace("\r", "")
                     val kspOutput =
                         allOutput.lines().filter { it.startsWith("> Task :workload:ksp") || it.startsWith("w: [ksp] ") }
                             .joinToString("\n")
