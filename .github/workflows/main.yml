@@ -3,6 +3,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main, 1.0.6-release, 1.0.7-release ]
   pull_request:
@@ -13,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
 
     # The type of runner that the job will run on
     runs-on: ${{ matrix.os }}
