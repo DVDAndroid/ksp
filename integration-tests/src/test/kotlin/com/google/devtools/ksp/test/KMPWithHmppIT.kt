@@ -362,6 +362,7 @@ class KMPWithHmppIT {
                         * `kspJvm`, artifacts: [], dependencies: [test-processor]
                         * `kspJvmTest`, artifacts: [], dependencies: [test-processor]
                         * `kspMetadataClientMain`, artifacts: [], dependencies: [test-processor]
+                        * `kspPluginClasspath`, artifacts: [], dependencies: [symbol-processing-api, symbol-processing]
                         
                         Tasks [compile, ksp] and their ksp/compile dependencies:
                         
